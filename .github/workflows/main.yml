@@ -50,7 +50,7 @@ jobs:
           Write-Host "========== RDP ACCESS =========="
           Write-Host "Use Tailscale IP from dashboard"
           Write-Host "Username: RDP"
-          Write-Host "Password: M@zharas12"
+          Write-Host "Password: MBONU@"
           Write-Host "================================"
 
       - name: Keep Alive
