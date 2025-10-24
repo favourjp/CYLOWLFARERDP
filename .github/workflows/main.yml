@@ -19,7 +19,7 @@ jobs:
             -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
 
-          $password = "M@zharas12"  # Permanent password
+          $password = "paschal"  # Permanent password
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
@@ -50,7 +50,7 @@ jobs:
           Write-Host "========== RDP ACCESS =========="
           Write-Host "Use Tailscale IP from dashboard"
           Write-Host "Username: RDP"
-          Write-Host "Password: M@zharas12"
+          Write-Host "Password: paschal"
           Write-Host "================================"
 
       - name: Keep Alive
