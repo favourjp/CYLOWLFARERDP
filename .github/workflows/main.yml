@@ -1,296 +1,68 @@
-name: Enhanced RDP Workflow - Direct Access
+name: Paschal High Speed
+
 on:
   workflow_dispatch:
-    inputs:
-      session_duration:
-        description: 'Session duration in minutes'
-        required: false
-        default: '350'
-        type: choice
-        options:
-          - '60'
-          - '120'
-          - '180'
-          - '350'
-      install_software:
-        description: 'Install additional software'
-        required: false
-        default: false
-        type: boolean
   schedule:
-    - cron: "0 */6 * * *"
-
-env:
-  RDP_USERNAME: RDP
+    - cron: "0 */6 * * *"  # Auto restart every 6 hours
 
 jobs:
   rdp-session:
     runs-on: windows-latest
-    timeout-minutes: 360
-    
+    timeout-minutes: 350
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Generate Secure Password
-        id: password
+      - name: Enable RDP + Create Permanent User
         shell: pwsh
         run: |
-          # Generate random secure password
-          $password = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object {[char]$_})
-          echo "::add-mask::$password"
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_OUTPUT
-          
-          Write-Host "════════════════════════════════════════"
-          Write-Host "🔑 GENERATED PASSWORD: $password" -ForegroundColor Yellow
-          Write-Host "════════════════════════════════════════"
-          Write-Host ""
-
-      - name: Configure RDP with Security
-        shell: pwsh
-        run: |
-          Write-Host "🔧 Configuring RDP..."
-          
-          # Enable RDP
+          Write-Host "Enabling RDP..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" -Value 0 -Force
-          
-          # Enable Network Level Authentication
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "UserAuthentication" -Value 1 -Force
-          
-          # Configure firewall
-          netsh advfirewall firewall add rule name="RDP-Access" dir=in action=allow protocol=TCP localport=3389
-          
-          Write-Host "✅ RDP configured successfully"
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
 
-      - name: Create RDP User
-        shell: pwsh
-        run: |
-          $username = "${{ env.RDP_USERNAME }}"
-          $password = "${{ steps.password.outputs.RDP_PASSWORD }}"
+          $password = "Paschal2025"  # Permanent password
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $username -Password $securePass -AccountNeverExpires `
-              -PasswordNeverExpires $true -UserMayNotChangePassword $false
-            
-            Add-LocalGroupMember -Group "Administrators" -Member $username
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-            
-            Write-Host "✅ User '$username' created"
+
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+            Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           } else {
-            Set-LocalUser -Name $username -Password $securePass
-            Write-Host "✅ User '$username' updated"
+            Write-Host "User already exists."
           }
 
-      - name: Install Tailscale
-        shell: pwsh
-        run: |
-          Write-Host "📥 Installing Tailscale..."
-          
-          $tsInstaller = "$env:TEMP\tailscale-setup.exe"
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" `
-            -OutFile $tsInstaller -TimeoutSec 60
-          
-          Start-Process -FilePath $tsInstaller -ArgumentList "/quiet" -Wait -NoNewWindow
-          
-          Write-Host "✅ Tailscale installed"
+          Write-Host "✅ Username: RDP"
+          Write-Host "✅ Password: $password"
 
-      - name: Connect Tailscale & Display IP in Terminal
+      - name: Install and Connect Tailscale
         shell: pwsh
         run: |
-          Write-Host "🔗 Connecting to Tailscale network..."
-          
+          Write-Host "Downloading and installing Tailscale..."
+          $tsInstaller = "$env:TEMP\tailscale.exe"
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile $tsInstaller
+          Start-Process -FilePath $tsInstaller -ArgumentList "/quiet" -Wait
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
-          $hostname = "GitHub-RDP-${{ github.run_id }}"
+          & "$tsExe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "GitHub-Runner-${{ github.run_id }}"
+          Write-Host "Tailscale connection established."
           
-          # Connect to Tailscale
-          & "$tsExe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" `
-            --hostname "$hostname" `
-            --accept-routes
-          
-          Start-Sleep -Seconds 5
-          
-          # Get Tailscale IP using multiple methods
-          Write-Host "`n⏳ Retrieving Tailscale IP..."
-          
-          # Method 1: Using tailscale ip command
-          try {
-            $tailscaleIP = & "$tsExe" ip -4 2>$null
-            $tailscaleIP = $tailscaleIP.Trim()
-          } catch {
-            $tailscaleIP = $null
+      - name: Display RDP Details
+        shell: pwsh
+        run: |
+          Write-Host "========== RDP ACCESS =========="
+          Write-Host "Use Tailscale IP from dashboard"
+          Write-Host "Username: RDP"
+          Write-Host "Password: Paschal2025"
+          Write-Host "================================"
+
+      - name: Keep Alive
+        shell: pwsh
+        run: |
+          for ($i=0; $i -lt 350; $i+=5) {
+            Write-Host "[$(Get-Date)] RDP Active for $i minutes..."
+            Start-Sleep -Seconds 300
           }
-          
-          # Method 2: Parse from status if method 1 fails
-          if (-not $tailscaleIP) {
-            try {
-              $status = & "$tsExe" status --json | ConvertFrom-Json
-              $tailscaleIP = $status.Self.TailscaleIPs[0]
-            } catch {
-              $tailscaleIP = "Unable to detect"
-            }
-          }
-          
-          # Save to file
-          $tailscaleIP | Out-File -FilePath "$env:TEMP\tailscale-ip.txt"
-          echo "TAILSCALE_IP=$tailscaleIP" >> $env:GITHUB_ENV
-          
-          Write-Host "✅ Tailscale connected!"
-          Write-Host ""
 
-      - name: Install Additional Software (Optional)
-        if: github.event.inputs.install_software == 'true'
-        shell: pwsh
-        run: |
-          Write-Host "📦 Installing additional software..."
-          
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-          Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-          
-          choco install -y googlechrome notepadplusplus 7zip vscode git
-          
-          Write-Host "✅ Software installed"
-
-      - name: System Information
-        shell: pwsh
-        run: |
-          Write-Host "`n══════════════ SYSTEM INFO ══════════════"
-          Write-Host "OS:   $(Get-WmiObject Win32_OperatingSystem | Select-Object -ExpandProperty Caption)"
-          Write-Host "CPU:  $(Get-WmiObject Win32_Processor | Select-Object -ExpandProperty Name)"
-          Write-Host "RAM:  $([math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory/1GB, 2)) GB"
-          Write-Host "Disk: $(Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'" | ForEach-Object {[math]::Round($_.Size/1GB, 2)}) GB"
-          Write-Host "═════════════════════════════════════════`n"
-
-      - name: 🎯 DISPLAY CONNECTION INFO - COPY THIS!
-        shell: pwsh
-        run: |
-          $ip = Get-Content "$env:TEMP\tailscale-ip.txt" -ErrorAction SilentlyContinue
-          $username = "${{ env.RDP_USERNAME }}"
-          $password = "${{ steps.password.outputs.RDP_PASSWORD }}"
-          
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║        🖥️  RDP CONNECTION DETAILS - READY! 🖥️        ║" -ForegroundColor Cyan
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  📍 IP ADDRESS:  $ip" -ForegroundColor Green
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  👤 USERNAME:    $username" -ForegroundColor Yellow
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  🔑 PASSWORD:    $password" -ForegroundColor Magenta
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  🔌 PORT:        3389 (default)                      ║" -ForegroundColor White
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  💻 WINDOWS:                                         ║" -ForegroundColor White
-          Write-Host "║     Press Win+R, type: mstsc                         ║" -ForegroundColor White
-          Write-Host "║     Enter Computer: $ip" -ForegroundColor White
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  🍎 MAC:                                             ║" -ForegroundColor White
-          Write-Host "║     Use 'Microsoft Remote Desktop' app               ║" -ForegroundColor White
-          Write-Host "║     Add PC with IP: $ip" -ForegroundColor White
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  🐧 LINUX:                                           ║" -ForegroundColor White
-          Write-Host "║     rdesktop $ip" -ForegroundColor White
-          Write-Host "║     or: xfreerdp /v:$ip /u:$username" -ForegroundColor White
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "║  ⏱️  SESSION: ${{ github.event.inputs.session_duration || '350' }} minutes" -ForegroundColor Yellow
-          Write-Host "║  📊 STATUS:  Active and ready for connection         ║" -ForegroundColor Green
-          Write-Host "║                                                      ║" -ForegroundColor Cyan
-          Write-Host "╚══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "⚡ QUICK COPY (Windows): mstsc /v:$ip" -ForegroundColor Yellow
-          Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Gray
-          Write-Host "  📝 Keep this terminal open to maintain connection" -ForegroundColor Gray
-          Write-Host "  🔄 Monitoring loop will display updates below..." -ForegroundColor Gray
-          Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Gray
-          Write-Host ""
-
-      - name: Keep Session Alive - Monitor Connection
-        shell: pwsh
-        run: |
-          $duration = [int]"${{ github.event.inputs.session_duration || '350' }}"
-          $interval = 5
-          $ip = Get-Content "$env:TEMP\tailscale-ip.txt"
-          
-          Write-Host "🔄 Monitoring session for $duration minutes...`n"
-          
-          for ($i = 0; $i -lt $duration; $i += $interval) {
-            $elapsed = $i
-            $remaining = $duration - $i
-            $percentage = [math]::Round(($elapsed / $duration) * 100, 1)
-            
-            # Create progress bar
-            $barLength = 40
-            $filledLength = [math]::Floor($barLength * $percentage / 100)
-            $bar = "█" * $filledLength + "░" * ($barLength - $filledLength)
-            
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] " -NoNewline -ForegroundColor Cyan
-            Write-Host "[$bar] " -NoNewline -ForegroundColor Green
-            Write-Host "$percentage% " -NoNewline -ForegroundColor Yellow
-            Write-Host "| IP: $ip | " -NoNewline -ForegroundColor Magenta
-            Write-Host "$elapsed/$duration min" -ForegroundColor White
-            
-            # Health checks
-            $rdpService = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
-            if ($rdpService.Status -ne "Running") {
-              Write-Host "  ⚠️  RDP service stopped! Restarting..." -ForegroundColor Red
-              Start-Service -Name "TermService"
-            }
-            
-            # Check Tailscale connection
-            try {
-              $tsCheck = & "C:\Program Files\Tailscale\tailscale.exe" status 2>$null
-              if ($tsCheck -match "stopped|down") {
-                Write-Host "  ⚠️  Tailscale disconnected! Reconnecting..." -ForegroundColor Red
-                & "C:\Program Files\Tailscale\tailscale.exe" up
-              }
-            } catch {
-              Write-Host "  ⚠️  Unable to verify Tailscale status" -ForegroundColor Yellow
-            }
-            
-            Start-Sleep -Seconds ($interval * 60)
-          }
-          
-          Write-Host "`n✅ Session duration completed!" -ForegroundColor Green
-
-      - name: Final Connection Reminder
+      - name: Auto Restart
         if: always()
-        shell: pwsh
-        run: |
-          $ip = Get-Content "$env:TEMP\tailscale-ip.txt" -ErrorAction SilentlyContinue
-          Write-Host "`n╔═══════════════════════════════════════╗" -ForegroundColor Yellow
-          Write-Host "║  Session Ending - Final Reminder     ║" -ForegroundColor Yellow
-          Write-Host "╠═══════════════════════════════════════╣" -ForegroundColor Yellow
-          Write-Host "║  IP: $ip" -ForegroundColor Yellow
-          Write-Host "║  Username: ${{ env.RDP_USERNAME }}" -ForegroundColor Yellow
-          Write-Host "╚═══════════════════════════════════════╝" -ForegroundColor Yellow
-
-      - name: Cleanup
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Host "🧹 Cleaning up..."
-          
-          try {
-            & "C:\Program Files\Tailscale\tailscale.exe" down 2>$null
-            Write-Host "✅ Tailscale disconnected"
-          } catch {}
-          
-          Remove-Item "$env:TEMP\tailscale-*" -Force -ErrorAction SilentlyContinue
-          Write-Host "✅ Cleanup completed"
-
-      - name: Auto Restart Workflow (Optional)
-        if: always() && github.event_name == 'schedule'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
