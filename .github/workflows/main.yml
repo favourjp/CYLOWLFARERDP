@@ -21,7 +21,7 @@ jobs:
             -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           
-          $password = "12345"  # Permanent password
+          $password = "Paschal2025"  # Permanent password
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
@@ -89,7 +89,7 @@ jobs:
           Write-Host "║                                                    ║" -ForegroundColor Cyan
           Write-Host "║  👤 USERNAME:      RDP                             ║" -ForegroundColor Yellow
           Write-Host "║                                                    ║" -ForegroundColor Cyan
-          Write-Host "║  🔑 PASSWORD:      12345                     ║" -ForegroundColor Magenta
+          Write-Host "║  🔑 PASSWORD:      Paschal2025                     ║" -ForegroundColor Magenta
           Write-Host "║                                                    ║" -ForegroundColor Cyan
           Write-Host "║  🔌 PORT:          3389                            ║" -ForegroundColor White
           Write-Host "║                                                    ║" -ForegroundColor Cyan
