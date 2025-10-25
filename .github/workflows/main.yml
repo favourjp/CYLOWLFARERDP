@@ -47,8 +47,8 @@ jobs:
       - name: Display RDP Details
         shell: pwsh
         run: |
-          Write-Host "========== RDP ACCESS ==========
-          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "========== RDP ACCESS =========="
+          Write-Host "Use Tailscale IP from dashboard"
           Write-Host "Username: RDP"
           Write-Host "Password: Paschal2025"
           Write-Host "================================"
