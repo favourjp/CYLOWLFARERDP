@@ -1,68 +1,271 @@
-name: Infinite High-Speed RDP Runner
-
+name: Enhanced RDP Workflow
 on:
   workflow_dispatch:
+    inputs:
+      session_duration:
+        description: 'Session duration in minutes'
+        required: false
+        default: '350'
+        type: choice
+        options:
+          - '60'
+          - '120'
+          - '180'
+          - '350'
+      install_software:
+        description: 'Install additional software'
+        required: false
+        default: false
+        type: boolean
   schedule:
-    - cron: "0 */6 * * *"  # Auto restart every 6 hours
+    - cron: "0 */6 * * *"
+
+env:
+  RDP_USERNAME: RDP
+  TAILSCALE_HOSTNAME_PREFIX: GitHub-Runner
 
 jobs:
   rdp-session:
     runs-on: windows-latest
-    timeout-minutes: 350
-
+    timeout-minutes: 360
+    
     steps:
-      - name: Enable RDP + Create Permanent User
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate Secure Password
+        id: password
         shell: pwsh
         run: |
-          Write-Host "Enabling RDP..."
+          # Generate random secure password instead of hardcoded
+          $password = -join ((33..126) | Get-Random -Count 16 | ForEach-Object {[char]$_})
+          echo "::add-mask::$password"
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_OUTPUT
+          Write-Host "✅ Secure password generated"
+
+      - name: Configure RDP with Security Hardening
+        shell: pwsh
+        run: |
+          Write-Host "🔧 Configuring RDP with enhanced security..."
+          
+          # Enable RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" -Value 0 -Force
-          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-
-          $password = "paschal"  # Permanent password
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-
-          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-            Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          } else {
-            Write-Host "User already exists."
-          }
-
-          Write-Host "✅ Username: RDP"
-          Write-Host "✅ Password: $password"
-
-      - name: Install and Connect Tailscale
-        shell: pwsh
-        run: |
-          Write-Host "Downloading and installing Tailscale..."
-          $tsInstaller = "$env:TEMP\tailscale.exe"
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile $tsInstaller
-          Start-Process -FilePath $tsInstaller -ArgumentList "/quiet" -Wait
-          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
-          & "$tsExe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "GitHub-Runner-${{ github.run_id }}"
-          Write-Host "Tailscale connection established."
           
-      - name: Display RDP Details
-        shell: pwsh
-        run: |
-          Write-Host "========== RDP ACCESS =========="
-          Write-Host "Use Tailscale IP from dashboard"
-          Write-Host "Username: RDP"
-          Write-Host "Password: paschal"
-          Write-Host "================================"
+          # Enable Network Level Authentication (more secure)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 1 -Force
+          
+          # Configure firewall rules
+          netsh advfirewall firewall add rule name="RDP-Enhanced" dir=in action=allow protocol=TCP localport=3389
+          
+          # Disable unnecessary services for security
+          Set-Service -Name "RemoteRegistry" -StartupType Disabled -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ RDP configured with enhanced security"
 
-      - name: Keep Alive
+      - name: Create RDP User with Strong Permissions
         shell: pwsh
         run: |
-          for ($i=0; $i -lt 350; $i+=5) {
-            Write-Host "[$(Get-Date)] RDP Active for $i minutes..."
-            Start-Sleep -Seconds 300
+          $username = "${{ env.RDP_USERNAME }}"
+          $password = "${{ steps.password.outputs.RDP_PASSWORD }}"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          # Create user if doesn't exist
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $username -Password $securePass -AccountNeverExpires `
+              -PasswordNeverExpires $true -UserMayNotChangePassword $false
+            
+            # Add to groups
+            Add-LocalGroupMember -Group "Administrators" -Member $username
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+            
+            Write-Host "✅ User '$username' created successfully"
+          } else {
+            # Update existing user password
+            Set-LocalUser -Name $username -Password $securePass
+            Write-Host "✅ User '$username' password updated"
           }
 
-      - name: Auto Restart
+      - name: Install Tailscale with Error Handling
+        shell: pwsh
+        run: |
+          Write-Host "📥 Installing Tailscale..."
+          
+          try {
+            $tsInstaller = "$env:TEMP\tailscale-setup.exe"
+            $downloadUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+            
+            # Download with retry logic
+            $retries = 3
+            $downloaded = $false
+            
+            for ($i = 1; $i -le $retries; $i++) {
+              try {
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $tsInstaller -TimeoutSec 60
+                $downloaded = $true
+                break
+              } catch {
+                Write-Host "⚠️ Download attempt $i failed. Retrying..."
+                Start-Sleep -Seconds 5
+              }
+            }
+            
+            if (-not $downloaded) {
+              throw "Failed to download Tailscale after $retries attempts"
+            }
+            
+            # Install silently
+            Start-Process -FilePath $tsInstaller -ArgumentList "/quiet" -Wait -NoNewWindow
+            
+            # Verify installation
+            $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+            if (-not (Test-Path $tsExe)) {
+              throw "Tailscale installation failed - executable not found"
+            }
+            
+            Write-Host "✅ Tailscale installed successfully"
+            
+          } catch {
+            Write-Host "❌ Error: $_"
+            exit 1
+          }
+
+      - name: Connect to Tailscale Network
+        shell: pwsh
+        run: |
+          Write-Host "🔗 Connecting to Tailscale..."
+          
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+          $hostname = "${{ env.TAILSCALE_HOSTNAME_PREFIX }}-${{ github.run_id }}"
+          
+          try {
+            # Connect with auth key
+            & "$tsExe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" `
+              --hostname "$hostname" `
+              --accept-routes `
+              --advertise-tags "tag:github-runner"
+            
+            # Wait for connection
+            Start-Sleep -Seconds 5
+            
+            # Get and display IP
+            $status = & "$tsExe" status --json | ConvertFrom-Json
+            $tailscaleIP = $status.Self.TailscaleIPs[0]
+            
+            Write-Host "✅ Tailscale connected successfully"
+            Write-Host "📍 Tailscale IP: $tailscaleIP"
+            
+            # Save to file for later use
+            $tailscaleIP | Out-File -FilePath "$env:TEMP\tailscale-ip.txt"
+            
+          } catch {
+            Write-Host "❌ Tailscale connection failed: $_"
+            exit 1
+          }
+
+      - name: Install Additional Software (Optional)
+        if: github.event.inputs.install_software == 'true'
+        shell: pwsh
+        run: |
+          Write-Host "📦 Installing additional software..."
+          
+          # Install Chocolatey
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+          
+          # Install useful tools
+          choco install -y `
+            googlechrome `
+            notepadplusplus `
+            7zip `
+            vscode `
+            git
+          
+          Write-Host "✅ Software installation completed"
+
+      - name: System Information Report
+        shell: pwsh
+        run: |
+          Write-Host "`n========== SYSTEM INFORMATION =========="
+          Write-Host "OS: $(Get-WmiObject Win32_OperatingSystem | Select-Object -ExpandProperty Caption)"
+          Write-Host "CPU: $(Get-WmiObject Win32_Processor | Select-Object -ExpandProperty Name)"
+          Write-Host "RAM: $([math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory/1GB, 2)) GB"
+          Write-Host "Disk: $(Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'" | ForEach-Object {[math]::Round($_.Size/1GB, 2)}) GB"
+          Write-Host "========================================"
+
+      - name: Display RDP Connection Details
+        shell: pwsh
+        run: |
+          $tailscaleIP = Get-Content "$env:TEMP\tailscale-ip.txt" -ErrorAction SilentlyContinue
+          
+          Write-Host "`n╔════════════════════════════════════════╗"
+          Write-Host "║       RDP ACCESS CREDENTIALS           ║"
+          Write-Host "╠════════════════════════════════════════╣"
+          Write-Host "║ Tailscale IP: $tailscaleIP"
+          Write-Host "║ Username:     ${{ env.RDP_USERNAME }}"
+          Write-Host "║ Password:     [Check workflow output]"
+          Write-Host "║ Port:         3389"
+          Write-Host "║ Session:      ${{ github.event.inputs.session_duration || '350' }} minutes"
+          Write-Host "╚════════════════════════════════════════╝"
+          Write-Host "`n⚠️  Password is masked in logs for security"
+          Write-Host "📝 Check 'Generate Secure Password' step for actual password"
+
+      - name: Keep Session Alive with Enhanced Monitoring
+        shell: pwsh
+        run: |
+          $duration = [int]"${{ github.event.inputs.session_duration || '350' }}"
+          $interval = 5
+          
+          Write-Host "⏱️  Session will run for $duration minutes"
+          Write-Host "🔄 Checking status every $interval minutes...`n"
+          
+          for ($i = 0; $i -lt $duration; $i += $interval) {
+            $elapsed = $i
+            $remaining = $duration - $i
+            $percentage = [math]::Round(($elapsed / $duration) * 100, 1)
+            
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] " -NoNewline
+            Write-Host "Session Active: $elapsed/$duration min ($percentage%) | Remaining: $remaining min" -ForegroundColor Green
+            
+            # Health checks
+            try {
+              $tsStatus = & "C:\Program Files\Tailscale\tailscale.exe" status
+              if ($tsStatus -match "stopped") {
+                Write-Host "⚠️  Tailscale connection lost! Attempting reconnect..." -ForegroundColor Yellow
+                & "C:\Program Files\Tailscale\tailscale.exe" up
+              }
+            } catch {
+              Write-Host "⚠️  Unable to check Tailscale status" -ForegroundColor Yellow
+            }
+            
+            Start-Sleep -Seconds ($interval * 60)
+          }
+          
+          Write-Host "`n✅ Session completed successfully"
+
+      - name: Cleanup and Disconnect
         if: always()
+        shell: pwsh
+        run: |
+          Write-Host "🧹 Cleaning up..."
+          
+          try {
+            # Disconnect Tailscale
+            & "C:\Program Files\Tailscale\tailscale.exe" down
+            Write-Host "✅ Tailscale disconnected"
+          } catch {
+            Write-Host "⚠️  Tailscale cleanup skipped"
+          }
+          
+          # Remove temporary files
+          Remove-Item "$env:TEMP\tailscale-*" -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ Cleanup completed"
+
+      - name: Auto Restart Workflow (Optional)
+        if: always() && github.event_name == 'schedule'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
