@@ -49,6 +49,7 @@ jobs:
         run: |
           Write-Host "========== RDP ACCESS =========="
           Write-Host "Use Tailscale IP from dashboard"
+          Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: Paschal2025"
           Write-Host "================================"
