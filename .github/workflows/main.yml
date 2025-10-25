@@ -1,15 +1,12 @@
 name: Paschal High Speed
-
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 */6 * * *"  # Auto restart every 6 hours
-
 jobs:
   rdp-session:
     runs-on: windows-latest
     timeout-minutes: 350
-
     steps:
       - name: Enable RDP + Create Permanent User
         shell: pwsh
@@ -18,10 +15,8 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-
-          $password = "Paschal2025"  # Permanent password
+          $password = "12345"  # Permanent password
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
             Add-LocalGroupMember -Group "Administrators" -Member "RDP"
@@ -29,7 +24,6 @@ jobs:
           } else {
             Write-Host "User already exists."
           }
-
           Write-Host "✅ Username: RDP"
           Write-Host "✅ Password: $password"
 
@@ -43,23 +37,103 @@ jobs:
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           & "$tsExe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "GitHub-Runner-${{ github.run_id }}"
           Write-Host "Tailscale connection established."
-          
-      - name: Display RDP Details
-        shell: pwsh
-        run: |
-          Write-Host "========== RDP ACCESS =========="
-          Write-Host "Use Tailscale IP from dashboard"
-          Write-Host "Username: RDP"
-          Write-Host "Password: Paschal2025"
-          Write-Host "================================"
 
-      - name: Keep Alive
+      - name: Get Tailscale IP and Display Connection Info
         shell: pwsh
         run: |
+          Write-Host "`nRetrieving Tailscale IP address..."
+          Start-Sleep -Seconds 3
+          
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+          
+          # Method 1: Get IP using 'tailscale ip' command
+          try {
+            $tailscaleIP = & "$tsExe" ip -4 2>$null
+            $tailscaleIP = $tailscaleIP.Trim()
+          } catch {
+            $tailscaleIP = $null
+          }
+          
+          # Method 2: Fallback - parse from status JSON
+          if (-not $tailscaleIP -or $tailscaleIP -eq "") {
+            try {
+              $status = & "$tsExe" status --json | ConvertFrom-Json
+              $tailscaleIP = $status.Self.TailscaleIPs[0]
+            } catch {
+              $tailscaleIP = "Unable to retrieve - Check Tailscale dashboard"
+            }
+          }
+          
+          # Display in a nice format
+          Write-Host ""
+          Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║           🚀 RDP CONNECTION READY! 🚀              ║" -ForegroundColor Cyan
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "╠════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  📍 TAILSCALE IP:  $tailscaleIP" -ForegroundColor Green
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  👤 USERNAME:      RDP                             ║" -ForegroundColor Yellow
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  🔑 PASSWORD:      12345                     ║" -ForegroundColor Magenta
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  🔌 PORT:          3389                            ║" -ForegroundColor White
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "╠════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  💻 WINDOWS:  mstsc /v:$tailscaleIP" -ForegroundColor White
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  🍎 MAC:      Microsoft Remote Desktop            ║" -ForegroundColor White
+          Write-Host "║               Add PC: $tailscaleIP" -ForegroundColor White
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "║  🐧 LINUX:    rdesktop $tailscaleIP" -ForegroundColor White
+          Write-Host "║                                                    ║" -ForegroundColor Cyan
+          Write-Host "╚════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "⚡ QUICK CONNECT: mstsc /v:$tailscaleIP" -ForegroundColor Yellow
+          Write-Host ""
+          Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Gray
+          Write-Host "  ℹ️  Keep this window open to maintain connection" -ForegroundColor Gray
+          Write-Host "  ⏱️  Session will run for 350 minutes (~5.8 hours)" -ForegroundColor Gray
+          Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Gray
+          Write-Host ""
+
+      - name: Keep Alive with Status Updates
+        shell: pwsh
+        run: |
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+          
+          # Get IP once more for the monitoring loop
+          try {
+            $tailscaleIP = & "$tsExe" ip -4 2>$null
+            $tailscaleIP = $tailscaleIP.Trim()
+          } catch {
+            $tailscaleIP = "N/A"
+          }
+          
+          Write-Host "🔄 Starting monitoring loop...`n"
+          
           for ($i=0; $i -lt 350; $i+=5) {
-            Write-Host "[$(Get-Date)] RDP Active for $i minutes..."
+            $elapsed = $i
+            $remaining = 350 - $i
+            $percentage = [math]::Round(($elapsed / 350) * 100, 1)
+            
+            # Progress bar
+            $barLength = 30
+            $filledLength = [math]::Floor($barLength * $percentage / 100)
+            $bar = "█" * $filledLength + "░" * ($barLength - $filledLength)
+            
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] " -NoNewline -ForegroundColor Cyan
+            Write-Host "[$bar] " -NoNewline -ForegroundColor Green
+            Write-Host "$percentage% " -NoNewline -ForegroundColor Yellow
+            Write-Host "| IP: $tailscaleIP | " -NoNewline -ForegroundColor Magenta
+            Write-Host "$elapsed/350 min" -ForegroundColor White
+            
             Start-Sleep -Seconds 300
           }
+          
+          Write-Host "`n✅ Session completed!" -ForegroundColor Green
 
       - name: Auto Restart
         if: always()
